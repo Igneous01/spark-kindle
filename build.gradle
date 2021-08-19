@@ -1,0 +1,133 @@
+buildscript {
+    repositories {
+        maven { url 'http://resolver/plugins-release-local' }
+        jcenter()
+
+    }
+    dependencies {
+        classpath('com.carfax.ds:data-services-library-gradle-plugin:1.1.0')
+        classpath "org.jfrog.buildinfo:build-info-extractor-gradle:latest.release"
+    }
+}
+
+plugins {
+    id "com.github.johnrengelman.shadow" version "5.1.0"
+}
+
+apply plugin: 'maven'
+apply plugin: 'idea'
+apply plugin: 'eclipse'
+apply plugin: 'java'
+apply plugin: 'data-services-library'
+apply plugin: "com.jfrog.artifactory"
+apply plugin: 'maven-publish'
+
+group = "com.carfax.dt"
+
+repositories {
+    maven { url 'http://resolver.svc.cfx/all' }
+    mavenLocal()
+}
+
+configurations {
+    testCompile.extendsFrom compileOnly
+}
+
+dependencies {
+    compileOnly "org.apache.spark:spark-sql_2.11:2.3.0"
+    compileOnly "org.apache.spark:spark-hive_2.11:2.3.0"
+
+    compile group: 'org.yaml', name: 'snakeyaml', version: '1.8'
+    compile group: 'org.reflections', name: 'reflections', version: '0.9.10'
+    compile("com.squareup.okhttp3:okhttp:3.11.0") {
+        exclude group: 'com.squareup.okio'
+    }
+    compile group: 'com.squareup.okio', name: 'okio', version: '1.14.0'
+
+    compileOnly "org.powermock:powermock-api-mockito2:1.7.4"
+    compileOnly "org.powermock:powermock-module-junit4:1.7.4"
+    compileOnly("com.holdenkarau:spark-testing-base_2.11:2.3.0_0.9.0") {
+        exclude group: 'org.apache.hadoop'
+    }
+}
+
+ext.localRepo = file("/usr/local/share/config/maven_repo/repository/${project.name}/jars/")
+ext.ARTIFACTORY_USER = project.findProperty("ARTIFACTORY_USER") ?: ""
+ext.ARTIFACTORY_PASSWORD = project.findProperty("ARTIFACTORY_PASSWORD") ?: ""
+
+task localDeployRepo(dependsOn: 'install', type: Copy) {
+    from jar
+    into localRepo
+}
+
+task version(dependsOn: updateVersionNumber) {
+    new File("version.txt").text = "$version"
+}
+
+// Configure Auto Relocation
+import com.github.jengelman.gradle.plugins.shadow.tasks.ConfigureShadowRelocation
+
+task relocateShadowJar(type: ConfigureShadowRelocation) {
+    target = tasks.shadowJar
+    prefix = "shadow" // Default value is "shadow"
+}
+
+tasks.shadowJar.dependsOn tasks.relocateShadowJar
+jar {
+    enabled = false
+    dependsOn(shadowJar { classifier = null })
+}
+
+publishing {
+    publications {
+        shadow(MavenPublication) { publication ->
+            from project.shadow.component(publication)
+            artifactId = 'carfax-spark-kindle'
+        }
+    }
+}
+
+// Documentation at https://www.jfrog.com/confluence/display/RTF/Gradle+Artifactory+Plugin
+artifactory {
+    contextUrl = 'http://resolver.svc.cfx'
+    clientConfig.info.setBuildNumber("$version")
+    // The base Artifactory URL if not overridden by the publisher/resolver
+    publish {
+        contextUrl = 'http://resolver.svc.cfx'   //The base Artifactory URL for the publisher
+        // A closure defining publishing information
+        repository {
+            repoKey = 'libs-release-local'   //The Artifactory repository key to publish to
+            username = "$ARTIFACTORY_USER"       //The publisher user name
+            password = "$ARTIFACTORY_PASSWORD"       //The publisher password
+            ivy {
+                // Optional section for configuring Ivy publication. Assumes Maven repo layout if not specified
+                ivyLayout = '[organization]/[module]/[revision]/[type]s/ivy-[revision].xml'
+                artifactLayout = '[organization]/[module]/[revision]/[module]-[revision](-[classifier]).[ext]'
+                mavenCompatible = true
+                // Convert any dots in an [organization] layout value to path separators, similar to Maven's groupId-to-path conversion. True if not specified
+            }
+        }
+
+        defaults {
+            // List of Gradle Publications (names or objects) from which to collect the list of artifacts to be deployed to Artifactory.
+            publications('shadow')
+        }
+    }
+}
+
+shadowJar {
+    relocate ('okhttp3','com.shadow.okhttp3')
+    relocate ('okio','com.shadow.okio')
+    relocate ('yaml', 'shadow.org.yaml')
+    relocate ('reflections', 'shadow.org.reflections')
+    dependencies {
+        exclude("org.powermock:powermock-api-mockito2:1.7.4")
+        exclude("org.powermock:powermock-module-junit4:1.7.4")
+        exclude("com.holdenkarau:spark-testing-base_2.11:2.3.0_0.9.0")
+    }
+}
+
+tasks.publishShadowPublicationToMavenLocal.doLast {
+    println jar.group + ":" + jar.archiveName + ":" + jar.version
+}
+

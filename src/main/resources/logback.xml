@@ -1,0 +1,8 @@
+<logger name="org.reflections.Reflections" level="error"
+        additivity="false">
+    <appender-ref ref="STDOUT" />
+</logger>
+<logger name="shadow.org.reflections.Reflections" level="error"
+        additivity="false">
+<appender-ref ref="STDOUT" />
+</logger>
